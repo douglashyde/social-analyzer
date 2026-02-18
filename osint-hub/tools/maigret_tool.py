@@ -1,6 +1,7 @@
 """Maigret - username search across 2500+ sites with detailed profiles."""
 import json
 import os
+import re
 import tempfile
 from .base import ToolWrapper, Finding, FindingType
 
@@ -41,10 +42,16 @@ class MaigretTool(ToolWrapper):
                                     url = entry.get("url_user", "")
                                     site = entry.get("site_name", entry.get("site", {}).get("name", ""))
                                     meta = {"site": site, "username": input_value}
+
+                                    # Extract tags/categories for the site
+                                    if entry.get("site", {}).get("tags"):
+                                        meta["tags"] = entry["site"]["tags"]
+
                                     if entry.get("ids_usernames"):
                                         meta["linked_usernames"] = entry["ids_usernames"]
                                     if entry.get("ids_links"):
                                         meta["linked_urls"] = entry["ids_links"]
+
                                     findings.append(Finding(
                                         FindingType.SOCIAL_PROFILE,
                                         url,
@@ -52,7 +59,8 @@ class MaigretTool(ToolWrapper):
                                         confidence=0.9,
                                         metadata=meta,
                                     ))
-                                    # Extract additional usernames found by maigret
+
+                                    # Promote linked usernames to proper findings
                                     for linked_un in entry.get("ids_usernames", {}).values():
                                         if linked_un != input_value:
                                             findings.append(Finding(
@@ -60,8 +68,29 @@ class MaigretTool(ToolWrapper):
                                                 linked_un,
                                                 source_tool=self.name,
                                                 confidence=0.6,
-                                                metadata={"found_on": site},
+                                                metadata={"found_on": site, "profile_url": url},
                                             ))
+
+                                    # Promote linked URLs to separate profile findings
+                                    for link_key, link_url in entry.get("ids_links", {}).items():
+                                        if link_url and link_url != url and link_url.startswith("http"):
+                                            findings.append(Finding(
+                                                FindingType.SOCIAL_PROFILE,
+                                                link_url,
+                                                source_tool=self.name,
+                                                confidence=0.7,
+                                                metadata={
+                                                    "site": site,
+                                                    "username": input_value,
+                                                    "link_type": link_key,
+                                                    "discovered_from": url,
+                                                },
+                                            ))
+
+                                    # Extract bio/about if available
+                                    if entry.get("ids_id"):
+                                        meta["user_id"] = entry["ids_id"]
+
                             except json.JSONDecodeError:
                                 continue
                 except Exception:
@@ -74,12 +103,15 @@ class MaigretTool(ToolWrapper):
                     parts = line.split("http")
                     if len(parts) >= 2:
                         url = "http" + parts[-1].strip()
+                        # Extract site name from the line
+                        site_match = re.search(r"\[.\]\s*(\S+)", line)
+                        site_name = site_match.group(1) if site_match else ""
                         findings.append(Finding(
                             FindingType.SOCIAL_PROFILE,
                             url,
                             source_tool=self.name,
                             confidence=0.8,
-                            metadata={"username": input_value},
+                            metadata={"username": input_value, "site": site_name},
                         ))
 
         return findings

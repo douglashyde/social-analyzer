@@ -86,7 +86,7 @@
         </div>
 
         <!-- Stats Cards -->
-        <div id="stats-section" class="grid grid-cols-4 gap-3" style="display:none">
+        <div id="stats-section" class="grid grid-cols-5 gap-3" style="display:none">
             <div class="card rounded-lg p-3 text-center">
                 <div class="text-2xl font-bold text-cyber-green mono" id="stat-findings">0</div>
                 <div class="text-xs text-gray-500">Findings</div>
@@ -102,6 +102,10 @@
             <div class="card rounded-lg p-3 text-center">
                 <div class="text-2xl font-bold text-cyber-yellow mono" id="stat-breaches">0</div>
                 <div class="text-xs text-gray-500">Breaches</div>
+            </div>
+            <div class="card rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-red-500 mono" id="stat-credentials">0</div>
+                <div class="text-xs text-gray-500">Credentials</div>
             </div>
         </div>
 
@@ -132,12 +136,14 @@
 const CATEGORY_CONFIG = {
     social_profile: { label: 'Social Profiles', color: 'text-cyber-blue', bg: 'bg-blue-900/20' },
     registered_site: { label: 'Registered Sites', color: 'text-cyan-400', bg: 'bg-cyan-900/20' },
+    leaked_credential: { label: 'Leaked Credentials', color: 'text-red-500', bg: 'bg-red-900/30' },
     breach: { label: 'Breaches', color: 'text-cyber-red', bg: 'bg-red-900/20' },
     email: { label: 'Emails', color: 'text-purple-400', bg: 'bg-purple-900/20' },
     related_email: { label: 'Related Emails', color: 'text-purple-300', bg: 'bg-purple-900/20' },
     username: { label: 'Usernames', color: 'text-cyber-green', bg: 'bg-green-900/20' },
     related_username: { label: 'Related Usernames', color: 'text-green-300', bg: 'bg-green-900/20' },
     phone: { label: 'Phones', color: 'text-yellow-400', bg: 'bg-yellow-900/20' },
+    related_phone: { label: 'Related Phones', color: 'text-yellow-300', bg: 'bg-yellow-900/20' },
     full_name: { label: 'Names', color: 'text-white', bg: 'bg-gray-800' },
     location: { label: 'Locations', color: 'text-orange-400', bg: 'bg-orange-900/20' },
     photo_url: { label: 'Photos', color: 'text-pink-400', bg: 'bg-pink-900/20' },
@@ -240,6 +246,12 @@ function updateLog(status) {
     container.scrollTop = container.scrollHeight;
 }
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
 function updateResults(results) {
     if (!results || !results.findings_by_type) return;
     const fbt = results.findings_by_type;
@@ -249,12 +261,27 @@ function updateResults(results) {
     document.getElementById('stat-tools').textContent = results.total_tool_runs || 0;
     document.getElementById('stat-profiles').textContent = (fbt.social_profile || []).length;
     document.getElementById('stat-breaches').textContent = (fbt.breach || []).length;
+    document.getElementById('stat-credentials').textContent = (fbt.leaked_credential || []).length;
 
-    // Findings by category
+    // Findings by category - prioritize credentials and profiles
     const container = document.getElementById('findings-container');
     container.innerHTML = '';
 
-    const sortedTypes = Object.keys(fbt).sort((a, b) => (fbt[b] || []).length - (fbt[a] || []).length);
+    const categoryOrder = [
+        'leaked_credential', 'social_profile', 'breach', 'registered_site',
+        'email', 'related_email', 'username', 'related_username',
+        'phone', 'related_phone', 'full_name', 'photo_url',
+        'location', 'domain', 'ip_address', 'raw',
+    ];
+    const sortedTypes = Object.keys(fbt).sort((a, b) => {
+        const orderA = categoryOrder.indexOf(a);
+        const orderB = categoryOrder.indexOf(b);
+        if (orderA !== -1 && orderB !== -1) return orderA - orderB;
+        if (orderA !== -1) return -1;
+        if (orderB !== -1) return 1;
+        return (fbt[b] || []).length - (fbt[a] || []).length;
+    });
+
     for (const ftype of sortedTypes) {
         const items = fbt[ftype];
         if (!items || items.length === 0) continue;
@@ -272,17 +299,42 @@ function updateResults(results) {
             const isUrl = value.startsWith('http');
             const confidence = Math.round((item.confidence || 0) * 100);
             const source = item.source_tool || '';
+            const meta = item.metadata || {};
             const confidenceColor = confidence > 80 ? 'text-green-400' : (confidence > 50 ? 'text-yellow-400' : 'text-gray-500');
 
-            html += `<div class="flex items-center justify-between py-1.5 px-2 rounded ${config.bg} group">
-                <div class="flex-1 min-w-0">
-                    ${isUrl ? `<a href="${value}" target="_blank" class="mono text-sm ${config.color} hover:underline truncate block">${value}</a>`
-                           : `<span class="mono text-sm text-gray-300 truncate block">${value}</span>`}
+            // Build metadata line based on type
+            let metaHtml = '';
+            if (ftype === 'leaked_credential') {
+                let parts = [];
+                if (meta.password) parts.push(`<span class="text-red-400">pw: <code class="bg-red-900/30 px-1 rounded">${escapeHtml(meta.password)}</code></span>`);
+                if (meta.password_hash) parts.push(`<span class="text-orange-400">hash: <code class="bg-orange-900/30 px-1 rounded">${escapeHtml(meta.password_hash)}</code></span>`);
+                if (meta.source) parts.push(`<span class="text-gray-600">${escapeHtml(meta.source)}</span>`);
+                if (meta.password_exposure_count) parts.push(`<span class="text-red-300">${meta.password_exposure_count} breaches</span>`);
+                metaHtml = parts.length ? `<div class="text-xs mt-1 flex flex-wrap gap-2">${parts.join('')}</div>` : '';
+            } else if (ftype === 'breach' && (meta.data_types_exposed || meta.password_exposed)) {
+                let parts = [];
+                if (meta.data_types_exposed) parts.push(`<span class="text-red-300">${escapeHtml(String(meta.data_types_exposed))}</span>`);
+                if (meta.password_exposed) parts.push(`<span class="text-red-500 font-bold">PW EXPOSED</span>`);
+                if (meta.breach_date) parts.push(`<span class="text-gray-600">${escapeHtml(meta.breach_date)}</span>`);
+                metaHtml = parts.length ? `<div class="text-xs mt-1 flex flex-wrap gap-2">${parts.join('')}</div>` : '';
+            } else if (ftype === 'social_profile' && meta.site) {
+                let parts = [`<span class="text-gray-600">${escapeHtml(meta.site)}</span>`];
+                if (meta.registration_confirmed) parts.push(`<span class="text-cyan-400">registered</span>`);
+                metaHtml = `<div class="text-xs mt-1 flex flex-wrap gap-2">${parts.join('')}</div>`;
+            }
+
+            html += `<div class="flex flex-col py-1.5 px-2 rounded ${config.bg} group">
+                <div class="flex items-center justify-between">
+                    <div class="flex-1 min-w-0">
+                        ${isUrl ? `<a href="${value}" target="_blank" class="mono text-sm ${config.color} hover:underline truncate block">${value}</a>`
+                               : `<span class="mono text-sm text-gray-300 truncate block">${escapeHtml(value)}</span>`}
+                    </div>
+                    <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+                        <span class="text-xs text-gray-600">${source}</span>
+                        <span class="mono text-xs ${confidenceColor}">${confidence}%</span>
+                    </div>
                 </div>
-                <div class="flex items-center gap-2 ml-3 flex-shrink-0">
-                    <span class="text-xs text-gray-600">${source}</span>
-                    <span class="mono text-xs ${confidenceColor}">${confidence}%</span>
-                </div>
+                ${metaHtml}
             </div>`;
         }
         if (items.length > 50) {

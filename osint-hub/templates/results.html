@@ -27,7 +27,7 @@
         </div>
 
         <!-- Summary Stats -->
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6" id="summary-stats"></div>
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6" id="summary-stats"></div>
 
         <!-- Findings -->
         <div id="results-findings" class="space-y-4"></div>
@@ -46,6 +46,7 @@
 const CATEGORY_CONFIG = {
     social_profile: { label: 'Social Profiles', color: 'text-cyber-blue', icon: '&#127760;' },
     registered_site: { label: 'Registered Sites', color: 'text-cyan-400', icon: '&#128274;' },
+    leaked_credential: { label: 'Leaked Credentials', color: 'text-red-500', icon: '&#128272;' },
     breach: { label: 'Data Breaches', color: 'text-cyber-red', icon: '&#9888;' },
     email: { label: 'Emails', color: 'text-purple-400', icon: '&#9993;' },
     related_email: { label: 'Related Emails', color: 'text-purple-300', icon: '&#9993;' },
@@ -61,6 +62,14 @@ const CATEGORY_CONFIG = {
     organization: { label: 'Organizations', color: 'text-blue-300', icon: '&#127970;' },
     raw: { label: 'Raw Intelligence', color: 'text-gray-400', icon: '&#128196;' },
 };
+
+// Priority ordering for display
+const CATEGORY_ORDER = [
+    'leaked_credential', 'social_profile', 'breach', 'registered_site',
+    'email', 'related_email', 'username', 'related_username',
+    'phone', 'related_phone', 'full_name', 'photo_url',
+    'location', 'domain', 'ip_address', 'organization', 'raw',
+];
 
 let scanResults = null;
 
@@ -100,6 +109,7 @@ function renderSummary(results) {
         { label: 'Tools Run', value: results.total_tool_runs, color: 'text-cyber-blue' },
         { label: 'Profiles', value: (fbt.social_profile || []).length, color: 'text-purple-400' },
         { label: 'Breaches', value: (fbt.breach || []).length, color: 'text-cyber-red' },
+        { label: 'Credentials', value: (fbt.leaked_credential || []).length, color: 'text-red-500' },
         { label: 'Sites', value: (fbt.registered_site || []).length, color: 'text-cyan-400' },
     ];
     const container = document.getElementById('summary-stats');
@@ -113,7 +123,15 @@ function renderSummary(results) {
 
 function renderFindings(fbt) {
     const container = document.getElementById('results-findings');
-    const sortedTypes = Object.keys(fbt).sort((a, b) => (fbt[b] || []).length - (fbt[a] || []).length);
+    // Sort by priority order, then by count
+    const sortedTypes = Object.keys(fbt).sort((a, b) => {
+        const orderA = CATEGORY_ORDER.indexOf(a);
+        const orderB = CATEGORY_ORDER.indexOf(b);
+        if (orderA !== -1 && orderB !== -1) return orderA - orderB;
+        if (orderA !== -1) return -1;
+        if (orderB !== -1) return 1;
+        return (fbt[b] || []).length - (fbt[a] || []).length;
+    });
 
     for (const ftype of sortedTypes) {
         const items = fbt[ftype];
@@ -131,13 +149,28 @@ function renderFindings(fbt) {
             const isUrl = (item.value || '').startsWith('http');
             const confidence = Math.round((item.confidence || 0) * 100);
             const meta = item.metadata || {};
-            const metaStr = Object.entries(meta).filter(([k]) => !['type'].includes(k)).map(([k, v]) => `${k}: ${v}`).join(' | ');
+
+            // Build metadata display based on finding type
+            let metaHtml = '';
+            if (ftype === 'leaked_credential') {
+                metaHtml = renderCredentialMeta(meta);
+            } else if (ftype === 'breach') {
+                metaHtml = renderBreachMeta(meta);
+            } else if (ftype === 'social_profile') {
+                metaHtml = renderProfileMeta(meta);
+            } else {
+                const metaStr = Object.entries(meta)
+                    .filter(([k]) => !['type'].includes(k))
+                    .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+                    .join(' | ');
+                metaHtml = metaStr ? `<div class="text-xs text-gray-600 mt-1 truncate">${metaStr}</div>` : '';
+            }
 
             html += `<div class="p-3 rounded-lg bg-dark-900/50 border border-gray-800/50">
                 <div class="flex items-center justify-between">
                     <div class="flex-1 min-w-0">
                         ${isUrl ? `<a href="${item.value}" target="_blank" class="mono text-sm ${config.color} hover:underline break-all">${item.value}</a>`
-                               : `<span class="mono text-sm text-gray-200 break-all">${item.value}</span>`}
+                               : `<span class="mono text-sm text-gray-200 break-all">${escapeHtml(item.value)}</span>`}
                     </div>
                     <div class="flex items-center gap-2 ml-4 flex-shrink-0">
                         <span class="text-xs text-gray-600">${item.source_tool}</span>
@@ -147,12 +180,49 @@ function renderFindings(fbt) {
                         <span class="mono text-xs text-gray-500">${confidence}%</span>
                     </div>
                 </div>
-                ${metaStr ? `<div class="text-xs text-gray-600 mt-1 truncate">${metaStr}</div>` : ''}
+                ${metaHtml}
             </div>`;
         }
         html += '</div></div>';
         container.innerHTML += html;
     }
+}
+
+function renderCredentialMeta(meta) {
+    let parts = [];
+    if (meta.password) parts.push(`<span class="text-red-400">password: <code class="bg-red-900/30 px-1.5 py-0.5 rounded">${escapeHtml(meta.password)}</code></span>`);
+    if (meta.password_hash) parts.push(`<span class="text-orange-400">hash: <code class="bg-orange-900/30 px-1.5 py-0.5 rounded">${escapeHtml(meta.password_hash)}</code></span>`);
+    if (meta.identity) parts.push(`<span class="text-gray-500">identity: ${escapeHtml(meta.identity)}</span>`);
+    if (meta.source) parts.push(`<span class="text-gray-600">source: ${escapeHtml(meta.source)}</span>`);
+    if (meta.breach) parts.push(`<span class="text-gray-600">breach: ${escapeHtml(meta.breach)}</span>`);
+    if (meta.password_exposure_count) parts.push(`<span class="text-red-300">exposed in ${meta.password_exposure_count} breaches</span>`);
+    return parts.length ? `<div class="text-xs mt-1.5 flex flex-wrap gap-3">${parts.join('')}</div>` : '';
+}
+
+function renderBreachMeta(meta) {
+    let parts = [];
+    if (meta.data_types_exposed) parts.push(`<span class="text-red-300">data exposed: ${escapeHtml(String(meta.data_types_exposed))}</span>`);
+    if (meta.breach_date) parts.push(`<span class="text-gray-500">date: ${escapeHtml(meta.breach_date)}</span>`);
+    if (meta.breach_domain) parts.push(`<span class="text-gray-500">domain: ${escapeHtml(meta.breach_domain)}</span>`);
+    if (meta.records_exposed) parts.push(`<span class="text-orange-400">${meta.records_exposed.toLocaleString()} records</span>`);
+    if (meta.password_exposed) parts.push(`<span class="text-red-500 font-semibold">PASSWORDS EXPOSED</span>`);
+    return parts.length ? `<div class="text-xs mt-1.5 flex flex-wrap gap-3">${parts.join('')}</div>` : '';
+}
+
+function renderProfileMeta(meta) {
+    let parts = [];
+    if (meta.site) parts.push(`<span class="text-gray-500">${escapeHtml(meta.site)}</span>`);
+    if (meta.username) parts.push(`<span class="text-green-400">@${escapeHtml(meta.username)}</span>`);
+    if (meta.registration_confirmed) parts.push(`<span class="text-cyan-400">registration confirmed</span>`);
+    if (meta.link_type) parts.push(`<span class="text-gray-600">via: ${escapeHtml(meta.link_type)}</span>`);
+    if (meta.tags) parts.push(`<span class="text-gray-600">tags: ${escapeHtml(String(meta.tags))}</span>`);
+    return parts.length ? `<div class="text-xs mt-1.5 flex flex-wrap gap-3">${parts.join('')}</div>` : '';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
 }
 
 function renderRecommendations(recs) {

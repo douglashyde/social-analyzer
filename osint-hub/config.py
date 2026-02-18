@@ -1,7 +1,7 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HOME_DIR = "/home/user"
+HOME_DIR = os.environ.get("OSINT_HOME", os.path.expanduser("~"))
 
 TOOL_PATHS = {
     "sherlock": os.path.join(HOME_DIR, "sherlock"),
@@ -24,6 +24,18 @@ TOOL_PATHS = {
     "h8mail": os.path.join(HOME_DIR, "h8mail"),
     "whatbreach": os.path.join(HOME_DIR, "WhatBreach"),
     "findpeopleinfo": os.path.join(HOME_DIR, "findpeopleinfo"),
+    # New tools - V2
+    "photon": os.path.join(HOME_DIR, "Photon"),
+    "ignorant": os.path.join(HOME_DIR, "ignorant"),
+    "socialscan": os.path.join(HOME_DIR, "socialscan"),
+    # Web-based tools (no local path needed, use requests)
+    "breachdirectory": os.path.join(HOME_DIR, "osint-hub"),
+    "hudsonrock": os.path.join(HOME_DIR, "osint-hub"),
+    "leakcheck": os.path.join(HOME_DIR, "osint-hub"),
+    "dehashed_free": os.path.join(HOME_DIR, "osint-hub"),
+    "emailrep": os.path.join(HOME_DIR, "osint-hub"),
+    "intelx_phonebook": os.path.join(HOME_DIR, "osint-hub"),
+    "psbdmp": os.path.join(HOME_DIR, "osint-hub"),
 }
 
 DATA_DIR = os.path.join(BASE_DIR, "data")
